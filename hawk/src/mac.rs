@@ -1,6 +1,6 @@
 use credentials::Key;
 use base64;
-use ring::constant_time;
+use openssl;
 use std::io::Write;
 use std::ops::Deref;
 use error::*;
@@ -59,9 +59,7 @@ impl Mac {
             None => write!(buffer, "\n")?,
         };
 
-        println!("{:?}", String::from_utf8(buffer.clone()));
-
-        Ok(Mac(key.sign(buffer.as_ref())))
+        Ok(Mac(key.sign(buffer.as_ref())?))
     }
 }
 
@@ -87,10 +85,7 @@ impl Deref for Mac {
 
 impl PartialEq for Mac {
     fn eq(&self, other: &Mac) -> bool {
-        match constant_time::verify_slices_are_equal(&self.0[..], &other.0[..]) {
-            Ok(_) => true,
-            Err(_) => false,
-        }
+        openssl::memcmp::eq(&self.0[..], &other.0[..])
     }
 }
 
@@ -100,12 +95,12 @@ mod test {
     use super::{Mac, MacType};
     use time::Timespec;
     use credentials::Key;
-    use ring::digest;
+    use openssl::hash::{MessageDigest};
 
     fn key() -> Key {
         Key::new(vec![11u8, 19, 228, 209, 79, 189, 200, 59, 166, 47, 86, 254, 235, 184, 120, 197,
                       75, 152, 201, 79, 115, 61, 111, 242, 219, 187, 173, 14, 227, 108, 60, 232],
-                 &digest::SHA256)
+                 MessageDigest::sha256()).unwrap()
     }
 
     #[test]

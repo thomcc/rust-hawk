@@ -188,7 +188,7 @@ mod test {
     use credentials::Key;
     use mac::Mac;
     use time::Timespec;
-    use ring::digest;
+    use openssl::hash::{MessageDigest};
 
     fn make_req_header() -> Header {
         Header::new(None,
@@ -220,7 +220,7 @@ mod test {
                                         None,
                                         None)
             .unwrap();
-        assert!(resp.validate_header(&server_header, &Key::new("tok", &digest::SHA256)));
+        assert!(resp.validate_header(&server_header, &Key::new("tok", MessageDigest::sha256()).unwrap()));
     }
 
     #[test]
@@ -243,7 +243,7 @@ mod test {
                                         None,
                                         None)
             .unwrap();
-        assert!(resp.validate_header(&server_header, &Key::new("tok", &digest::SHA256)));
+        assert!(resp.validate_header(&server_header, &Key::new("tok", MessageDigest::sha256()).unwrap()));
     }
 
     #[test]
@@ -267,7 +267,7 @@ mod test {
                                         None,
                                         None)
             .unwrap();
-        assert!(!resp.validate_header(&server_header, &Key::new("tok", &digest::SHA256)));
+        assert!(!resp.validate_header(&server_header, &Key::new("tok", MessageDigest::sha256()).unwrap()));
     }
 
     #[test]
@@ -292,7 +292,7 @@ mod test {
                                         None,
                                         None)
             .unwrap();
-        assert!(resp.validate_header(&server_header, &Key::new("tok", &digest::SHA256)));
+        assert!(resp.validate_header(&server_header, &Key::new("tok", MessageDigest::sha256()).unwrap()));
 
         // a different supplied hash won't match..
         let hash = vec![99, 99, 99, 99];
@@ -300,6 +300,6 @@ mod test {
             ResponseBuilder::from_request_header(&req_header, "POST", "localhost", 9988, "/a/b")
                 .hash(&hash[..])
                 .response();
-        assert!(!resp.validate_header(&server_header, &Key::new("tok", &digest::SHA256)));
+        assert!(!resp.validate_header(&server_header, &Key::new("tok", MessageDigest::sha256()).unwrap()));
     }
 }

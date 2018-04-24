@@ -367,7 +367,7 @@ mod test {
     use credentials::{Credentials, Key};
     use header::Header;
     use url::Url;
-    use ring::digest;
+    use openssl::hash::{MessageDigest};
     use std::str::FromStr;
 
     // this is a header from a real request using the JS Hawk library, to
@@ -435,7 +435,7 @@ mod test {
         let req = RequestBuilder::new("GET", "example.com", 443, "/foo").request();
         let credentials = Credentials {
             id: "me".to_string(),
-            key: Key::new(vec![99u8; 32], &digest::SHA256),
+            key: Key::new(vec![99u8; 32], MessageDigest::sha256()).unwrap(),
         };
         let header = req.make_header_full(&credentials, Timespec::new(1000, 100), "nonny")
             .unwrap();
@@ -465,7 +465,7 @@ mod test {
             .request();
         let credentials = Credentials {
             id: "me".to_string(),
-            key: Key::new(vec![99u8; 32], &digest::SHA256),
+            key: Key::new(vec![99u8; 32], MessageDigest::sha256()).unwrap(),
         };
         let header = req.make_header_full(&credentials, Timespec::new(1000, 100), "nonny")
             .unwrap();
@@ -490,7 +490,7 @@ mod test {
         let req = RequestBuilder::new("GET", "example.com", 443, "/foo").request();
         let credentials = Credentials {
             id: "me".to_string(),
-            key: Key::new(vec![99u8; 32], &digest::SHA256),
+            key: Key::new(vec![99u8; 32], MessageDigest::sha256()).unwrap(),
         };
         let header = req.make_header_full(&credentials, now().to_timespec(), "nonny")
             .unwrap();
@@ -502,7 +502,7 @@ mod test {
         let header = Header::from_str(REAL_HEADER).unwrap();
         let credentials = Credentials {
             id: "me".to_string(),
-            key: Key::new("tok", &digest::SHA256),
+            key: Key::new("tok", MessageDigest::sha256()).unwrap(),
         };
         let req = RequestBuilder::new("GET", "pulse.taskcluster.net", 443, "/v1/namespaces")
             .request();
@@ -516,7 +516,7 @@ mod test {
         let header = Header::from_str(REAL_HEADER).unwrap();
         let credentials = Credentials {
             id: "me".to_string(),
-            key: Key::new("WRONG", &digest::SHA256),
+            key: Key::new("WRONG", MessageDigest::sha256()).unwrap(),
         };
         let req = RequestBuilder::new("GET", "pulse.taskcluster.net", 443, "/v1/namespaces")
             .request();
@@ -528,7 +528,7 @@ mod test {
         let header = Header::from_str(REAL_HEADER).unwrap();
         let credentials = Credentials {
             id: "me".to_string(),
-            key: Key::new("tok", &digest::SHA256),
+            key: Key::new("tok", MessageDigest::sha256()).unwrap(),
         };
         let req = RequestBuilder::new("GET", "pulse.taskcluster.net", 443, "WRONG PATH").request();
         assert!(!req.validate_header(&header, &credentials.key, Duration::weeks(52000)));
@@ -567,7 +567,7 @@ mod test {
         let header = make_header_without_hash();
         let req = RequestBuilder::new("", "", 0, "").request();
         assert!(req.validate_header(&header,
-                                    &Key::new("tok", &digest::SHA256),
+                                    &Key::new("tok", MessageDigest::sha256()).unwrap(),
                                     Duration::weeks(52000)));
     }
 
@@ -576,7 +576,7 @@ mod test {
         let header = make_header_with_hash();
         let req = RequestBuilder::new("", "", 0, "").request();
         assert!(req.validate_header(&header,
-                                    &Key::new("tok", &digest::SHA256),
+                                    &Key::new("tok", MessageDigest::sha256()).unwrap(),
                                     Duration::weeks(52000)));
     }
 
@@ -588,7 +588,7 @@ mod test {
             .hash(Some(&hash[..]))
             .request();
         assert!(!req.validate_header(&header,
-                                     &Key::new("tok", &digest::SHA256),
+                                     &Key::new("tok", MessageDigest::sha256()).unwrap(),
                                      Duration::weeks(52000)));
     }
 
@@ -600,7 +600,7 @@ mod test {
             .hash(Some(&hash[..]))
             .request();
         assert!(req.validate_header(&header,
-                                    &Key::new("tok", &digest::SHA256),
+                                    &Key::new("tok", MessageDigest::sha256()).unwrap(),
                                     Duration::weeks(52000)));
 
         // ..but supplying the wrong hash will cause validation to fail
@@ -609,14 +609,14 @@ mod test {
             .hash(Some(&hash[..]))
             .request();
         assert!(!req.validate_header(&header,
-                                     &Key::new("tok", &digest::SHA256),
+                                     &Key::new("tok", MessageDigest::sha256()).unwrap(),
                                      Duration::weeks(52000)));
     }
 
     fn round_trip_bewit(req: Request, duration: Duration, expected: bool) {
         let credentials = Credentials {
             id: "me".to_string(),
-            key: Key::new("tok", &digest::SHA256),
+            key: Key::new("tok", MessageDigest::sha256()).unwrap(),
         };
 
         let bewit = req.make_bewit(&credentials, duration).unwrap();

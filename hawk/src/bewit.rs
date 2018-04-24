@@ -114,14 +114,14 @@ mod test {
     use super::*;
     use std::str::FromStr;
     use credentials::Key;
-    use ring::digest;
+    use openssl::hash::{MessageDigest};
     use mac::{Mac, MacType};
 
     fn make_mac() -> Mac {
         let key = Key::new(vec![11u8, 19, 228, 209, 79, 189, 200, 59, 166, 47, 86, 254, 235, 184,
                                 120, 197, 75, 152, 201, 79, 115, 61, 111, 242, 219, 187, 173, 14,
                                 227, 108, 60, 232],
-                           &digest::SHA256);
+                           MessageDigest::sha256()).unwrap();
         Mac::new(MacType::Header,
                  &key,
                  Timespec::new(1353832834, 100),

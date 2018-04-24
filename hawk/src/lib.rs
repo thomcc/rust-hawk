@@ -14,16 +14,16 @@
 //! extern crate time;
 //! extern crate hawk;
 //!
-//! use hawk::{RequestBuilder, Credentials, Key, SHA256, PayloadHasher};
+//! use hawk::{RequestBuilder, Credentials, Key, Digest, PayloadHasher};
 //!
 //! fn main() {
 //!     // provide the Hawk id and key
 //!     let credentials = Credentials {
 //!         id: "test-client".to_string(),
-//!         key: Key::new(vec![99u8; 32], &SHA256),
+//!         key: Key::new(vec![99u8; 32], Digest::sha256()).unwrap(),
 //!     };
 //!
-//!     let payload_hash = PayloadHasher::hash("text/plain", &SHA256, "request-body");
+//!     let payload_hash = PayloadHasher::hash("text/plain", Digest::sha256(), "request-body").unwrap();
 //!
 //!     // provide the details of the request to be authorized
 //!      let request = RequestBuilder::new("POST", "example.com", 80, "/v1/users")
@@ -50,7 +50,7 @@
 //! extern crate time;
 //! extern crate hawk;
 //!
-//! use hawk::{RequestBuilder, Header, Key, SHA256};
+//! use hawk::{RequestBuilder, Header, Key, Digest};
 //! use hawk::mac::Mac;
 //!
 //! fn main() {
@@ -73,14 +73,14 @@
 //!        .hash(&hash[..])
 //!        .request();
 //!
-//!    let key = Key::new(vec![99u8; 32], &SHA256);
+//!    let key = Key::new(vec![99u8; 32], Digest::sha256()).unwrap();
 //!    if !request.validate_header(&hdr, &key, time::Duration::weeks(5200)) {
 //!        panic!("header validation failed. Is it 2117 already?");
 //!    }
 //! }
 extern crate base64;
 extern crate time;
-extern crate ring;
+extern crate openssl;
 extern crate url;
 extern crate rand;
 
@@ -115,4 +115,4 @@ pub use bewit::Bewit;
 pub mod mac;
 
 // convenience imports
-pub use ring::digest::{SHA256, SHA384, SHA512};
+pub use openssl::hash::MessageDigest as Digest;

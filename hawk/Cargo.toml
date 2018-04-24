@@ -1,7 +1,7 @@
 [package]
 name = "hawk"
-version = "1.0.2"
-authors = ["Jonas Finnemann Jensen <jopsen@gmail.com>", "Dustin J. Mitchell <dustin@mozilla.com>"]
+version = "2.0.0"
+authors = ["Jonas Finnemann Jensen <jopsen@gmail.com>", "Dustin J. Mitchell <dustin@mozilla.com>", "Edouard Oger <eoger@mozilla.com>"]
 license = "MPL-2.0"
 readme = "README.md"
 repository = "https://github.com/taskcluster/rust-hawk"
@@ -10,12 +10,12 @@ homepage = "https://docs.rs/hawk/"
 description = "Hawk Implementation for Rust"
 
 [dev-dependencies]
-pretty_assertions = "^0.1.2"
+pretty_assertions = "0.5.1"
 
 [dependencies]
-base64 = "~0.6.0"
-ring = "^0.8.0"
-time = "^0.1.32"
-url = "1.4.0"
-rand = "0.3"
-error-chain = "^0.11.0-rc.2"
+base64 = "0.9.0"
+openssl = "0.10.7"
+time = "0.1.39"
+url = "1.7.0"
+rand = "0.4.2"
+error-chain = "0.11.0"
