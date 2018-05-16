@@ -1,9 +1,10 @@
-use base64;
+use base64::{self, display::Base64Display};
 use std::fmt;
 use std::str::FromStr;
 use mac::Mac;
 use error::*;
 use time::Timespec;
+use std::borrow::Cow;
 
 /// Representation of a Hawk `Authorization` header value (the part following "Hawk ").
 ///
@@ -11,51 +12,71 @@ use time::Timespec;
 /// string using the `fmt_header` method.
 ///
 /// All fields are optional, although for specific purposes some fields must be present.
-#[derive(Clone, PartialEq, Debug)]
-pub struct Header {
-    pub id: Option<String>,
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct Header<'a> {
+    pub id: Option<Cow<'a, str>>,
     pub ts: Option<Timespec>,
-    pub nonce: Option<String>,
-    pub mac: Option<Mac>,
-    pub ext: Option<String>,
-    pub hash: Option<Vec<u8>>,
-    pub app: Option<String>,
-    pub dlg: Option<String>,
+    pub nonce: Option<Cow<'a, str>>,
+    pub mac: Option<Cow<'a, Mac>>,
+    pub ext: Option<Cow<'a, str>>,
+    pub hash: Option<Cow<'a, [u8]>>,
+    pub app: Option<Cow<'a, str>>,
+    pub dlg: Option<Cow<'a, str>>,
 }
 
-impl Header {
-    /// Create a new Header with the full set of Hawk fields.
-    ///
-    /// This is a low-level funtion. Headers are more often created from Request or Responses.
-    ///
-    /// Note that none of the string-formatted header components can contain the character `\"`.
-    pub fn new<S>(id: Option<S>,
-                  ts: Option<Timespec>,
-                  nonce: Option<S>,
-                  mac: Option<Mac>,
-                  ext: Option<S>,
-                  hash: Option<Vec<u8>>,
-                  app: Option<S>,
-                  dlg: Option<S>)
-                  -> Result<Header>
-        where S: Into<String>
-    {
-        Ok(Header {
-            id: Header::check_component(id)?,
-            ts: ts,
-            nonce: Header::check_component(nonce)?,
-            mac: mac,
-            ext: Header::check_component(ext)?,
-            hash: hash,
-            app: Header::check_component(app)?,
-            dlg: Header::check_component(dlg)?,
-        })
+impl<'a> Header<'a> {
+
+    #[inline]
+    pub fn with_ts(mut self, ts: Option<Timespec>) -> Header<'a> {
+        self.ts = ts;
+        self
+    }
+
+    #[inline]
+    pub fn with_mac(mut self, mac: Option<impl Into<Cow<'a, Mac>>>) -> Header<'a> {
+        self.mac = mac.map(|m| m.into());
+        self
+    }
+
+    #[inline]
+    pub fn with_hash(mut self, hash: Option<impl Into<Cow<'a, [u8]>>>) -> Header<'a> {
+        self.hash = hash.map(|h| h.into());
+        self
+    }
+
+    #[inline]
+    pub fn with_id(mut self, id: Option<impl Into<Cow<'a, str>>>) -> Result<Header<'a>> {
+        self.id = Header::check_component(id)?;
+        Ok(self)
+    }
+
+    #[inline]
+    pub fn with_nonce(mut self, nonce: Option<impl Into<Cow<'a, str>>>) -> Result<Header<'a>> {
+        self.nonce = Header::check_component(nonce)?;
+        Ok(self)
+    }
+
+    #[inline]
+    pub fn with_app(mut self, app: Option<impl Into<Cow<'a, str>>>) -> Result<Header<'a>> {
+        self.app = Header::check_component(app)?;
+        Ok(self)
+    }
+
+
+    #[inline]
+    pub fn with_dlg(mut self, dlg: Option<impl Into<Cow<'a, str>>>) -> Result<Header<'a>> {
+        self.dlg = Header::check_component(dlg)?;
+        Ok(self)
+    }
+
+    #[inline]
+    pub fn with_ext(mut self, ext: Option<impl Into<Cow<'a, str>>>) -> Result<Header<'a>> {
+        self.ext = Header::check_component(ext)?;
+        Ok(self)
     }
 
     /// Check a header component for validity.
-    fn check_component<S>(value: Option<S>) -> Result<Option<String>>
-        where S: Into<String>
-    {
+    fn check_component(value: Option<impl Into<Cow<'a, str>>>) -> Result<Option<Cow<'a, str>>> {
         if let Some(value) = value {
             let value = value.into();
             if value.contains('\"') {
@@ -84,7 +105,7 @@ impl Header {
             sep = ", ";
         }
         if let Some(ref mac) = self.mac {
-            write!(f, "{}mac=\"{}\"", sep, base64::encode(mac))?;
+            write!(f, "{}mac=\"{}\"", sep, Base64Display::standard(mac))?;
             sep = ", ";
         }
         if let Some(ref ext) = self.ext {
@@ -92,7 +113,7 @@ impl Header {
             sep = ", ";
         }
         if let Some(ref hash) = self.hash {
-            write!(f, "{}hash=\"{}\"", sep, base64::encode(hash))?;
+            write!(f, "{}hash=\"{}\"", sep, Base64Display::standard(hash))?;
             sep = ", ";
         }
         if let Some(ref app) = self.app {
@@ -106,27 +127,17 @@ impl Header {
     }
 }
 
-impl fmt::Display for Header {
+impl<'a> fmt::Display for Header<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.fmt_header(f)
     }
 }
 
-impl FromStr for Header {
+impl FromStr for Header<'static> {
     type Err = Error;
-    fn from_str(s: &str) -> Result<Header> {
-        let mut p = &s[..];
-
+    fn from_str(mut p: &str) -> Result<Header<'static>> {
+        let mut result = Header::default();
         // Required attributes
-        let mut id: Option<&str> = None;
-        let mut ts: Option<Timespec> = None;
-        let mut nonce: Option<&str> = None;
-        let mut mac: Option<Vec<u8>> = None;
-        // Optional attributes
-        let mut hash: Option<Vec<u8>> = None;
-        let mut ext: Option<&str> = None;
-        let mut app: Option<&str> = None;
-        let mut dlg: Option<&str> = None;
 
         while !p.is_empty() {
             // Skip whitespace and commas used as separators
@@ -151,24 +162,37 @@ impl FromStr for Header {
                         Some(v) => {
                             let val = &p[..v];
                             match *attr {
-                                "id" => id = Some(val),
+                                "id" => {
+                                    result = result.with_id(Some(val.to_string()))?;
+                                }
                                 "ts" => {
                                     let epoch = i64::from_str(val)
                                         .chain_err(|| "Error parsing `ts` field")?;
-                                    ts = Some(Timespec::new(epoch, 0));
+                                    result = result.with_ts(Some(Timespec::new(epoch, 0)));
                                 }
                                 "mac" => {
-                                    mac = Some(base64::decode(val)
-                                                   .chain_err(|| "Error parsing `mac` field")?);
+                                    result = result.with_mac(Some(
+                                        Cow::Owned(
+                                            base64::decode(val)
+                                                .chain_err(|| "Error parsing `mac` field")?
+                                                .into())));
                                 }
-                                "nonce" => nonce = Some(val),
-                                "ext" => ext = Some(val),
+                                "nonce" => {
+                                    result = result.with_nonce(Some(val.to_string()))?;
+                                }
+                                "ext" => {
+                                    result = result.with_ext(Some(val.to_string()))?;
+                                }
                                 "hash" => {
-                                    hash = Some(base64::decode(val)
-                                                    .chain_err(|| "Error parsing `hash` field")?);
+                                    result = result.with_hash(Some(base64::decode(val)
+                                                    .chain_err(|| "Error parsing `hash` field")?));
                                 }
-                                "app" => app = Some(val),
-                                "dlg" => dlg = Some(val),
+                                "app" => {
+                                    result = result.with_app(Some(val.to_string()))?;
+                                }
+                                "dlg" => {
+                                    result = result.with_dlg(Some(val.to_string()))?;
+                                }
                                 _ => bail!("Invalid Hawk field {}", *attr),
                             };
                             // Break if we are at end of string, otherwise skip separator
@@ -183,35 +207,7 @@ impl FromStr for Header {
                 None => bail!(ErrorKind::HeaderParseError),
             };
         }
-
-        Ok(Header {
-            id: match id {
-                Some(id) => Some(id.to_string()),
-                None => None,
-            },
-            ts: ts,
-            nonce: match nonce {
-                Some(nonce) => Some(nonce.to_string()),
-                None => None,
-            },
-            mac: match mac {
-                Some(mac) => Some(Mac::from(mac)),
-                None => None,
-            },
-            ext: match ext {
-                Some(ext) => Some(ext.to_string()),
-                None => None,
-            },
-            hash: hash,
-            app: match app {
-                Some(app) => Some(app.to_string()),
-                None => None,
-            },
-            dlg: match dlg {
-                Some(dlg) => Some(dlg.to_string()),
-                None => None,
-            },
-        })
+        Ok(result)
     }
 }
 
@@ -224,67 +220,28 @@ mod test {
 
     #[test]
     fn illegal_id() {
-        assert!(Header::new(Some("ab\"cdef"),
-                            Some(Timespec::new(1234, 0)),
-                            Some("nonce"),
-                            Some(Mac::from(vec![])),
-                            Some("ext"),
-                            None,
-                            None,
-                            None)
-            .is_err());
+        assert!(Header::default().with_id(Some("ab\"cdef")).is_err());
     }
 
     #[test]
     fn illegal_nonce() {
-        assert!(Header::new(Some("abcdef"),
-                            Some(Timespec::new(1234, 0)),
-                            Some("no\"nce"),
-                            Some(Mac::from(vec![])),
-                            Some("ext"),
-                            None,
-                            None,
-                            None)
-            .is_err());
+        assert!(Header::default().with_nonce(Some("no\"nce")).is_err());
     }
 
     #[test]
     fn illegal_ext() {
-        assert!(Header::new(Some("abcdef"),
-                            Some(Timespec::new(1234, 0)),
-                            Some("nonce"),
-                            Some(Mac::from(vec![])),
-                            Some("ex\"t"),
-                            None,
-                            None,
-                            None)
-            .is_err());
+        assert!(Header::default().with_ext(Some("ex\"t")).is_err());
     }
 
     #[test]
     fn illegal_app() {
-        assert!(Header::new(Some("abcdef"),
-                            Some(Timespec::new(1234, 0)),
-                            Some("nonce"),
-                            Some(Mac::from(vec![])),
-                            None,
-                            None,
-                            Some("a\"pp"),
-                            None)
-            .is_err());
+        assert!(Header::default().with_app(Some("ap\"p")).is_err());
     }
+
 
     #[test]
     fn illegal_dlg() {
-        assert!(Header::new(Some("abcdef"),
-                            Some(Timespec::new(1234, 0)),
-                            Some("nonce"),
-                            Some(Mac::from(vec![])),
-                            None,
-                            None,
-                            None,
-                            Some("d\"lg"))
-            .is_err());
+        assert!(Header::default().with_dlg(Some("dl\"g")).is_err());
     }
 
     #[test]
@@ -295,16 +252,16 @@ mod test {
                                       hash=\"6R4rV5iE+NPoym+WwjeHzjAGXUtLNIxmo1vpMofpLAE=\", \
                                       app=\"my-app\", dlg=\"my-authority\"")
             .unwrap();
-        assert!(s.id == Some("dh37fgj492je".to_string()));
+        assert_eq!(s.id.unwrap(), "dh37fgj492je");
         assert!(s.ts == Some(Timespec::new(1353832234, 0)));
-        assert!(s.nonce == Some("j4h3g2".to_string()));
-        assert!(s.mac ==
-                Some(Mac::from(vec![233, 30, 43, 87, 152, 132, 248, 211, 232, 202, 111, 150,
-                                    194, 55, 135, 206, 48, 6, 93, 75, 75, 52, 140, 102, 163,
-                                    91, 233, 50, 135, 233, 44, 1])));
-        assert!(s.ext == Some("some-app-ext-data".to_string()));
-        assert!(s.app == Some("my-app".to_string()));
-        assert!(s.dlg == Some("my-authority".to_string()));
+        assert_eq!(s.nonce.unwrap(), "j4h3g2");
+        assert_eq!(s.mac.unwrap().as_ref(),
+                   &Mac::from(vec![233, 30, 43, 87, 152, 132, 248, 211, 232, 202, 111, 150,
+                                   194, 55, 135, 206, 48, 6, 93, 75, 75, 52, 140, 102, 163,
+                                   91, 233, 50, 135, 233, 44, 1]));
+        assert_eq!(s.ext.unwrap(), "some-app-ext-data");
+        assert_eq!(s.app.unwrap(), "my-app");
+        assert_eq!(s.dlg.unwrap(), "my-authority");
     }
 
     #[test]
@@ -334,13 +291,13 @@ mod test {
                                       nonce=\"abc\", \
                                       mac=\"6R4rV5iE+NPoym+WwjeHzjAGXUtLNIxmo1vpMofpLAE=\"")
             .unwrap();
-        assert!(s.id == Some("xyz".to_string()));
+        assert_eq!(s.id.unwrap(), "xyz");
         assert!(s.ts == Some(Timespec::new(1353832234, 0)));
-        assert!(s.nonce == Some("abc".to_string()));
-        assert!(s.mac ==
-                Some(Mac::from(vec![233, 30, 43, 87, 152, 132, 248, 211, 232, 202, 111, 150,
-                                    194, 55, 135, 206, 48, 6, 93, 75, 75, 52, 140, 102, 163,
-                                    91, 233, 50, 135, 233, 44, 1])));
+        assert_eq!(s.nonce.unwrap(), "abc");
+        assert_eq!(s.mac.unwrap().as_ref(),
+                   &Mac::from(vec![233, 30, 43, 87, 152, 132, 248, 211, 232, 202, 111, 150,
+                                   194, 55, 135, 206, 48, 6, 93, 75, 75, 52, 140, 102, 163,
+                                   91, 233, 50, 135, 233, 44, 1]));
         assert!(s.ext == None);
         assert!(s.app == None);
         assert!(s.dlg == None);
@@ -352,14 +309,14 @@ mod test {
                                       nonce=\"j4h3g2\"  , , ext=\"some-app-ext-data\", \
                                       mac=\"6R4rV5iE+NPoym+WwjeHzjAGXUtLNIxmo1vpMofpLAE=\"")
             .unwrap();
-        assert!(s.id == Some("dh37fgj492je".to_string()));
+        assert_eq!(s.id.unwrap(), "dh37fgj492je");
         assert!(s.ts == Some(Timespec::new(1353832234, 0)));
-        assert!(s.nonce == Some("j4h3g2".to_string()));
-        assert!(s.mac ==
-                Some(Mac::from(vec![233, 30, 43, 87, 152, 132, 248, 211, 232, 202, 111, 150,
-                                    194, 55, 135, 206, 48, 6, 93, 75, 75, 52, 140, 102, 163,
-                                    91, 233, 50, 135, 233, 44, 1])));
-        assert!(s.ext == Some("some-app-ext-data".to_string()));
+        assert_eq!(s.nonce.unwrap(), "j4h3g2");
+        assert_eq!(s.mac.unwrap().as_ref(),
+                   &Mac::from(vec![233, 30, 43, 87, 152, 132, 248, 211, 232, 202, 111, 150,
+                                   194, 55, 135, 206, 48, 6, 93, 75, 75, 52, 140, 102, 163,
+                                   91, 233, 50, 135, 233, 44, 1]));
+        assert_eq!(s.ext.unwrap(), "some-app-ext-data");
         assert!(s.app == None);
         assert!(s.dlg == None);
     }
@@ -367,7 +324,7 @@ mod test {
     #[test]
     fn to_str_no_fields() {
         // must supply a type for S, since it is otherwise unused
-        let s = Header::new::<String>(None, None, None, None, None, None, None, None).unwrap();
+        let s: Header<'static> = Header::default();
         let formatted = format!("{}", s);
         println!("got: {}", formatted);
         assert!(formatted == "")
@@ -375,17 +332,13 @@ mod test {
 
     #[test]
     fn to_str_few_fields() {
-        let s = Header::new(Some("dh37fgj492je"),
-                            Some(Timespec::new(1353832234, 0)),
-                            Some("j4h3g2"),
-                            Some(Mac::from(vec![8, 35, 182, 149, 42, 111, 33, 192, 19, 22, 94,
-                                                43, 118, 176, 65, 69, 86, 4, 156, 184, 85, 107,
-                                                249, 242, 172, 200, 66, 209, 57, 63, 38, 83])),
-                            None,
-                            None,
-                            None,
-                            None)
-            .unwrap();
+        let s = Header::default()
+            .with_id(Some("dh37fgj492je")).unwrap()
+            .with_ts(Some(Timespec::new(1353832234, 0)))
+            .with_nonce(Some("j4h3g2")).unwrap()
+            .with_mac(Some(Mac::from(vec![8, 35, 182, 149, 42, 111, 33, 192, 19, 22, 94,
+                                          43, 118, 176, 65, 69, 86, 4, 156, 184, 85, 107,
+                                          249, 242, 172, 200, 66, 209, 57, 63, 38, 83])));
         let formatted = format!("{}", s);
         println!("got: {}", formatted);
         assert!(formatted ==
@@ -395,17 +348,17 @@ mod test {
 
     #[test]
     fn to_str_maximal() {
-        let s = Header::new(Some("dh37fgj492je"),
-                            Some(Timespec::new(1353832234, 0)),
-                            Some("j4h3g2"),
-                            Some(Mac::from(vec![8, 35, 182, 149, 42, 111, 33, 192, 19, 22, 94,
-                                                43, 118, 176, 65, 69, 86, 4, 156, 184, 85, 107,
-                                                249, 242, 172, 200, 66, 209, 57, 63, 38, 83])),
-                            Some("my-ext-value"),
-                            Some(vec![1, 2, 3, 4]),
-                            Some("my-app"),
-                            Some("my-dlg"))
-            .unwrap();
+        let s = Header::default()
+            .with_id(Some("dh37fgj492je")).unwrap()
+            .with_ts(Some(Timespec::new(1353832234, 0)))
+            .with_nonce(Some("j4h3g2")).unwrap()
+            .with_mac(Some(Mac::from(vec![8, 35, 182, 149, 42, 111, 33, 192, 19, 22, 94,
+                                          43, 118, 176, 65, 69, 86, 4, 156, 184, 85, 107,
+                                          249, 242, 172, 200, 66, 209, 57, 63, 38, 83])))
+            .with_ext(Some("my-ext-value")).unwrap()
+            .with_hash(Some(vec![1, 2, 3, 4]))
+            .with_app(Some("my-app")).unwrap()
+            .with_dlg(Some("my-dlg")).unwrap();
         let formatted = format!("{}", s);
         println!("got: {}", formatted);
         assert!(formatted ==
@@ -416,17 +369,17 @@ mod test {
 
     #[test]
     fn round_trip() {
-        let s = Header::new(Some("dh37fgj492je"),
-                            Some(Timespec::new(1353832234, 0)),
-                            Some("j4h3g2"),
-                            Some(Mac::from(vec![8, 35, 182, 149, 42, 111, 33, 192, 19, 22, 94,
-                                                43, 118, 176, 65, 69, 86, 4, 156, 184, 85, 107,
-                                                249, 242, 172, 200, 66, 209, 57, 63, 38, 83])),
-                            Some("my-ext-value"),
-                            Some(vec![1, 2, 3, 4]),
-                            Some("my-app"),
-                            Some("my-dlg"))
-            .unwrap();
+        let s = Header::default()
+            .with_id(Some("dh37fgj492je")).unwrap()
+            .with_ts(Some(Timespec::new(1353832234, 0)))
+            .with_nonce(Some("j4h3g2")).unwrap()
+            .with_mac(Some(Mac::from(vec![8, 35, 182, 149, 42, 111, 33, 192, 19, 22, 94,
+                                          43, 118, 176, 65, 69, 86, 4, 156, 184, 85, 107,
+                                          249, 242, 172, 200, 66, 209, 57, 63, 38, 83])))
+            .with_ext(Some("my-ext-value")).unwrap()
+            .with_hash(Some(vec![1, 2, 3, 4]))
+            .with_app(Some("my-app")).unwrap()
+            .with_dlg(Some("my-dlg")).unwrap();
         let formatted = format!("{}", s);
         println!("got: {}", s);
         let s2 = Header::from_str(&formatted).unwrap();

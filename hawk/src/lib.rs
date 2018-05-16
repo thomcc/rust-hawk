@@ -52,20 +52,22 @@
 //!
 //! use hawk::{RequestBuilder, Header, Key, Digest};
 //! use hawk::mac::Mac;
+//! use std::error::Error;
 //!
-//! fn main() {
+//! fn main() -> Result<(), Box<Error>> {
 //!    let mac = Mac::from(vec![7, 22, 226, 240, 84, 78, 49, 75, 115, 144, 70,
 //!                             106, 102, 134, 144, 128, 225, 239, 95, 132, 202,
 //!                             154, 213, 118, 19, 63, 183, 108, 215, 134, 118, 115]);
 //!    // get the header (usually from the received request; constructed directly here)
-//!    let hdr = Header::new(Some("dh37fgj492je"),
-//!                          Some(time::Timespec::new(1353832234, 0)),
-//!                          Some("j4h3g2"),
-//!                          Some(mac),
-//!                          Some("my-ext-value"),
-//!                          Some(vec![1, 2, 3, 4]),
-//!                          Some("my-app"),
-//!                          Some("my-dlg")).unwrap();
+//!    let hdr = Header::default()
+//!              .with_id(Some("dh37fgj492je"))?
+//!              .with_ts(Some(time::Timespec::new(1353832234, 0)))
+//!              .with_nonce(Some("j4h3g2"))?
+//!              .with_mac(Some(mac))
+//!              .with_ext(Some("my-ext-value"))?
+//!              .with_hash(Some(vec![1, 2, 3, 4]))
+//!              .with_app(Some("my-app"))?
+//!              .with_dlg(Some("my-dlg"))?;
 //!
 //!    // build a request object based on what we know
 //!    let hash = vec![1, 2, 3, 4];
@@ -77,12 +79,15 @@
 //!    if !request.validate_header(&hdr, &key, time::Duration::weeks(5200)) {
 //!        panic!("header validation failed. Is it 2117 already?");
 //!    }
+//!    Ok(())
 //! }
+//! ```
 extern crate base64;
 extern crate time;
 extern crate openssl;
 extern crate url;
 extern crate rand;
+
 
 #[cfg(test)]
 #[macro_use]

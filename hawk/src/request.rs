@@ -1,7 +1,7 @@
 use base64;
 use time;
 use url::Url;
-use mac::{Mac, MacType};
+use mac::{Mac, MacType, MacParams};
 use header::Header;
 use response::ResponseBuilder;
 use bewit::Bewit;
@@ -11,6 +11,7 @@ use rand::Rng;
 use error::*;
 use time::{now, Duration};
 use std::str;
+use std::borrow::{Cow};
 
 /// Request represents a single HTTP request.
 ///
@@ -47,51 +48,41 @@ pub struct Request<'a> {
 impl<'a> Request<'a> {
     /// Create a new Header for this request, inventing a new nonce and setting the
     /// timestamp to the current time.
-    pub fn make_header(&self, credentials: &Credentials) -> Result<Header> {
+    pub fn make_header(&self, credentials: &Credentials) -> Result<Header<'a>> {
         let nonce = random_string(10);
         self.make_header_full(credentials, time::now().to_timespec(), nonce)
     }
 
     /// Similar to `make_header`, but allowing specification of the timestamp
     /// and nonce.
-    pub fn make_header_full<S>(&self,
-                               credentials: &Credentials,
-                               ts: time::Timespec,
-                               nonce: S)
-                               -> Result<Header>
-        where S: Into<String>
+    pub fn make_header_full(&self,
+                            credentials: &Credentials,
+                            ts: time::Timespec,
+                            nonce: impl Into<Cow<'a, str>>)
+                            -> Result<Header<'a>>
     {
         let nonce = nonce.into();
-        let mac = Mac::new(MacType::Header,
-                           &credentials.key,
-                           ts,
-                           &nonce,
-                           self.method,
-                           self.host,
-                           self.port,
-                           self.path,
-                           self.hash,
-                           self.ext)?;
-        Header::new(Some(credentials.id.clone()),
-                    Some(ts),
-                    Some(nonce),
-                    Some(mac),
-                    match self.ext {
-                        None => None,
-                        Some(v) => Some(v.to_string()),
-                    },
-                    match self.hash {
-                        None => None,
-                        Some(v) => Some(v.to_vec()),
-                    },
-                    match self.app {
-                        None => None,
-                        Some(v) => Some(v.to_string()),
-                    },
-                    match self.dlg {
-                        None => None,
-                        Some(v) => Some(v.to_string()),
-                    })
+        let mac = Mac::new_signed(&credentials.key,
+                                  MacParams {
+                                      mac_type: MacType::Header,
+                                      ts,
+                                      nonce: nonce.as_ref(),
+                                      method: self.method,
+                                      host: self.host,
+                                      port: self.port,
+                                      path: self.path,
+                                      hash: self.hash,
+                                      ext: self.ext,
+                                  })?;
+        Ok(Header::default()
+            .with_id(Some(credentials.id.clone()))?
+            .with_ts(Some(ts))
+            .with_nonce(Some(nonce))?
+            .with_mac(Some(mac))
+            .with_ext(self.ext)?
+            .with_app(self.app)?
+            .with_dlg(self.dlg)?
+            .with_hash(self.hash))
     }
 
     /// Make a "bewit" that can be attached to a URL to authenticate GET access.
@@ -102,16 +93,18 @@ impl<'a> Request<'a> {
         // note that this includes `method` and `hash` even though they must always be GET and None
         // for bewits.  If they aren't, then the bewit just won't validate -- no need to catch
         // that now
-        let mac = Mac::new(MacType::Bewit,
-                           &credentials.key,
-                           exp,
-                           "",
-                           self.method,
-                           self.host,
-                           self.port,
-                           self.path,
-                           self.hash,
-                           self.ext)?;
+        let mac = Mac::new_signed(&credentials.key,
+                           MacParams {
+                               mac_type: MacType::Bewit,
+                               ts: exp,
+                               nonce: "",
+                               method: self.method,
+                               host: self.host,
+                               port: self.port,
+                               path: self.path,
+                               hash: self.hash,
+                               ext: self.ext,
+                           })?;
         let bewit = Bewit::new(&credentials.id, exp, mac, self.ext);
         Ok(bewit)
     }
@@ -137,13 +130,13 @@ impl<'a> Request<'a> {
             }
         };
         let nonce = match header.nonce {
-            Some(ref nonce) => nonce,
+            Some(ref nonce) => nonce.as_ref(),
             None => {
                 return false;
             }
         };
         let header_mac = match header.mac {
-            Some(ref mac) => mac,
+            Some(ref mac) => mac.as_ref(),
             None => {
                 return false;
             }
@@ -158,16 +151,18 @@ impl<'a> Request<'a> {
         };
 
         // first verify the MAC
-        match Mac::new(MacType::Header,
-                       key,
-                       ts,
-                       nonce,
-                       self.method,
-                       self.host,
-                       self.port,
-                       self.path,
-                       header_hash,
-                       header_ext) {
+        match Mac::new_signed(key,
+                              MacParams {
+                                  mac_type: MacType::Header,
+                                  ts,
+                                  nonce,
+                                  method: self.method,
+                                  host: self.host,
+                                  port: self.port,
+                                  path: self.path,
+                                  hash: header_hash,
+                                  ext: header_ext,
+                              }) {
             Ok(calculated_mac) => {
                 if &calculated_mac != header_mac {
                     return false;
@@ -206,19 +201,18 @@ impl<'a> Request<'a> {
     ///
     /// Nonces and hashes do not apply when using bewits.
     pub fn validate_bewit(&self, bewit: &Bewit, key: &Key) -> bool {
-        let calculated_mac = Mac::new(MacType::Bewit,
-                                      key,
-                                      bewit.exp(),
-                                      "",
-                                      self.method,
-                                      self.host,
-                                      self.port,
-                                      self.path,
-                                      self.hash,
-                                      match bewit.ext() {
-                                          Some(e) => Some(e),
-                                          None => None,
-                                      });
+        let calculated_mac = Mac::new_signed(key,
+                                             MacParams {
+                                                 mac_type: MacType::Bewit,
+                                                 ts: bewit.exp(),
+                                                 nonce: "",
+                                                 method: self.method,
+                                                 host: self.host,
+                                                 port: self.port,
+                                                 path: self.path,
+                                                 hash: self.hash,
+                                                 ext: bewit.ext(),
+                                             });
         let calculated_mac = match calculated_mac {
             Ok(m) => m,
             Err(_) => {
@@ -440,18 +434,13 @@ mod test {
         let header = req.make_header_full(&credentials, Timespec::new(1000, 100), "nonny")
             .unwrap();
         assert_eq!(header,
-                   Header {
-                       id: Some("me".to_string()),
-                       ts: Some(Timespec::new(1000, 100)),
-                       nonce: Some("nonny".to_string()),
-                       mac: Some(Mac::from(vec![122, 47, 2, 53, 195, 247, 185, 107, 133, 250,
-                                                61, 134, 200, 35, 118, 94, 48, 175, 237, 108,
-                                                60, 71, 4, 2, 244, 66, 41, 172, 91, 7, 233, 140])),
-                       ext: None,
-                       hash: None,
-                       app: None,
-                       dlg: None,
-                   });
+                   Header::default()
+                       .with_id(Some("me")).unwrap()
+                       .with_ts(Some(Timespec::new(1000, 100)))
+                       .with_nonce(Some("nonny")).unwrap()
+                       .with_mac(Some(Mac::from(vec![122, 47, 2, 53, 195, 247, 185, 107, 133, 250,
+                                                     61, 134, 200, 35, 118, 94, 48, 175, 237, 108,
+                                                     60, 71, 4, 2, 244, 66, 41, 172, 91, 7, 233, 140]))))
     }
 
     #[test]
@@ -470,19 +459,18 @@ mod test {
         let header = req.make_header_full(&credentials, Timespec::new(1000, 100), "nonny")
             .unwrap();
         assert_eq!(header,
-                   Header {
-                       id: Some("me".to_string()),
-                       ts: Some(Timespec::new(1000, 100)),
-                       nonce: Some("nonny".to_string()),
-                       mac: Some(Mac::from(vec![72, 123, 243, 214, 145, 81, 129, 54, 183, 90,
+                   Header::default()
+                       .with_id(Some("me".to_string())).unwrap()
+                       .with_nonce(Some("nonny")).unwrap()
+                       .with_ext(Some("ext")).unwrap()
+                       .with_app(Some("app".to_string())).unwrap()
+                       .with_dlg(Some("dlg")).unwrap()
+                       .with_hash(Some(&hash[..]))
+                       .with_ts(Some(Timespec::new(1000, 100)))
+                       .with_mac(Some(Mac::from(vec![72, 123, 243, 214, 145, 81, 129, 54, 183, 90,
                                                 22, 136, 192, 146, 208, 53, 216, 138, 145, 94,
                                                 175, 204, 217, 8, 77, 16, 202, 50, 10, 144, 133,
-                                                162])),
-                       ext: Some("ext".to_string()),
-                       hash: Some(hash.clone()),
-                       app: Some("app".to_string()),
-                       dlg: Some("dlg".to_string()),
-                   });
+                                                162]))));
     }
 
     #[test]
@@ -534,32 +522,25 @@ mod test {
         assert!(!req.validate_header(&header, &credentials.key, Duration::weeks(52000)));
     }
 
-    fn make_header_without_hash() -> Header {
-        Header::new(Some("dh37fgj492je"),
-                    Some(Timespec::new(1353832234, 0)),
-                    Some("j4h3g2"),
-                    Some(Mac::from(vec![161, 105, 122, 110, 248, 62, 129, 193, 148, 206, 239,
+    fn make_header_without_hash() -> Header<'static> {
+        Header::default()
+            .with_id(Some("dh37fgj492je")).unwrap()
+            .with_ts(Some(Timespec::new(1353832234, 0)))
+            .with_nonce(Some("j4h3g2")).unwrap()
+            .with_mac(Some(Mac::from(vec![161, 105, 122, 110, 248, 62, 129, 193, 148, 206, 239,
                                         193, 219, 46, 137, 221, 51, 170, 135, 114, 81, 68, 145,
-                                        182, 15, 165, 145, 168, 114, 237, 52, 35])),
-                    None,
-                    None,
-                    None,
-                    None)
-            .unwrap()
+                                        182, 15, 165, 145, 168, 114, 237, 52, 35])))
     }
 
-    fn make_header_with_hash() -> Header {
-        Header::new(Some("dh37fgj492je"),
-                    Some(Timespec::new(1353832234, 0)),
-                    Some("j4h3g2"),
-                    Some(Mac::from(vec![189, 53, 155, 244, 203, 150, 255, 238, 135, 144, 186,
+    fn make_header_with_hash() -> Header<'static> {
+        Header::default()
+            .with_id(Some("dh37fgj492je")).unwrap()
+            .with_ts(Some(Timespec::new(1353832234, 0)))
+            .with_nonce(Some("j4h3g2")).unwrap()
+            .with_mac(Some(Mac::from(vec![189, 53, 155, 244, 203, 150, 255, 238, 135, 144, 186,
                                         93, 6, 189, 184, 21, 150, 210, 226, 61, 93, 154, 17,
-                                        218, 142, 250, 254, 193, 123, 132, 131, 195])),
-                    None,
-                    Some(vec![1, 2, 3, 4]),
-                    None,
-                    None)
-            .unwrap()
+                                        218, 142, 250, 254, 193, 123, 132, 131, 195])))
+            .with_hash(Some(vec![1, 2, 3, 4]))
     }
 
     #[test]

@@ -115,24 +115,25 @@ mod test {
     use std::str::FromStr;
     use credentials::Key;
     use openssl::hash::{MessageDigest};
-    use mac::{Mac, MacType};
+    use mac::{Mac, MacType, MacParams};
 
     fn make_mac() -> Mac {
         let key = Key::new(vec![11u8, 19, 228, 209, 79, 189, 200, 59, 166, 47, 86, 254, 235, 184,
                                 120, 197, 75, 152, 201, 79, 115, 61, 111, 242, 219, 187, 173, 14,
                                 227, 108, 60, 232],
                            MessageDigest::sha256()).unwrap();
-        Mac::new(MacType::Header,
-                 &key,
-                 Timespec::new(1353832834, 100),
-                 "nonny",
-                 "POST",
-                 "mysite.com",
-                 443,
-                 "/v1/api",
-                 None,
-                 None)
-            .unwrap()
+        Mac::new_signed(&key,
+                        MacParams {
+                            mac_type: MacType::Header,
+                            ts: Timespec::new(1353832834, 100),
+                            nonce: "nonny",
+                            method: "POST",
+                            host: "mysite.com",
+                            port: 443,
+                            path: "/v1/api",
+                            ext: None,
+                            hash: None,
+                        }).unwrap()
     }
 
     #[test]

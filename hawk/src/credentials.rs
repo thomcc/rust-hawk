@@ -2,7 +2,7 @@ use error::*;
 use openssl::hash::MessageDigest;
 use openssl::pkey::{PKey, Private};
 use openssl::sign::Signer;
-
+use std::io;
 /// Hawk key.
 ///
 /// While any sequence of bytes can be specified as a key, note that each digest algorithm has
@@ -13,25 +13,62 @@ pub struct Key {
     digest: MessageDigest
 }
 
+pub(crate) struct SignedWriter<'a> {
+    signer: Signer<'a>
+}
+
+impl<'a> SignedWriter<'a> {
+    #[inline]
+    pub(crate) fn new(signer: Signer<'a>) -> SignedWriter<'a> {
+        SignedWriter { signer }
+    }
+
+    #[inline]
+    fn finish_into(self, dest: &mut [u8]) -> Result<usize> {
+        let len = self.signer.len()?;
+        assert!(len <= dest.len());
+        Ok(self.signer.sign(dest)?)
+    }
+
+    #[inline]
+    pub(crate) fn finish_into_vec(self, dest: &mut Vec<u8>) -> Result<()> {
+        dest.resize(self.signer.len()?, 0);
+        // Note: signer.len() is upper bound (although it's possible for our use case
+        // it will always be the same), so we truncate after.
+        let wrote_len = self.finish_into(&mut dest[..])?;
+        dest.truncate(wrote_len);
+        Ok(())
+    }
+}
+
+impl<'a> io::Write for SignedWriter<'a> {
+    #[inline]
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.signer.update(buf)?;
+        Ok(buf.len())
+    }
+
+    #[inline]
+    fn flush(&mut self) -> io::Result<()> {
+        // We don't buffer input (maybe we should?) so this is a no-op
+        Ok(())
+    }
+}
+
 impl Key {
     pub fn new<B>(key: B, digest: MessageDigest) -> Result<Key>
-        where B: Into<Vec<u8>>
+        where B: AsRef<[u8]>
     {
-        let key = PKey::hmac(key.into().as_ref()).chain_err(|| "Key creation failed")?;
+        let key = PKey::hmac(key.as_ref()).chain_err(|| "Key creation failed")?;
         Ok(Key {
             key,
             digest
         })
     }
 
-    pub fn sign(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let mut hmac_signer = Signer::new(self.digest.clone(), &self.key)
-            .chain_err(|| "Cannot instanciate HMAC signer.")?;
-        hmac_signer.update(&data).chain_err(|| "Cannot feed data to signer.")?;
-        let digest = hmac_signer.sign_to_vec().chain_err(|| "Cannot create signature.")?;
-        let mut mac = vec![0; self.digest.size()];
-        mac.clone_from_slice(digest.as_ref());
-        Ok(mac)
+    pub(crate) fn signer<'a>(&'a self) -> Result<SignedWriter<'a>> {
+        Ok(SignedWriter::new(
+            Signer::new(self.digest.clone(), &self.key)?))
     }
 }
 
@@ -60,4 +97,7 @@ mod test {
         let key = vec![0u8; 99];
         Key::new(key, MessageDigest::sha256()).unwrap();
     }
+
+    // It would be nice for Key::signer() and SignedWriter to get test coverage here
+    // but ATM it's covered in `mac.rs`, which is probably fine for now.
 }

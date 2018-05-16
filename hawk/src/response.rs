@@ -1,4 +1,4 @@
-use mac::{Mac, MacType};
+use mac::{Mac, MacType, MacParams};
 use header::Header;
 use credentials::Key;
 use error::*;
@@ -19,15 +19,14 @@ pub struct Response<'a> {
     host: &'a str,
     port: u16,
     path: &'a str,
-    req_header: &'a Header,
+    req_header: &'a Header<'a>,
     hash: Option<&'a [u8]>,
     ext: Option<&'a str>,
 }
 
 impl<'a> Response<'a> {
     /// Create a new Header for this response, based on the given request and request header
-    pub fn make_header(&self, key: &Key) -> Result<Header> {
-        let mac;
+    pub fn make_header(&self, key: &Key) -> Result<Header<'a>> {
         let ts = self.req_header
             .ts
             .ok_or("Missing `ts` atttribute in Hawk header")?;
@@ -35,32 +34,24 @@ impl<'a> Response<'a> {
             .nonce
             .as_ref()
             .ok_or("Missing `nonce` attribute in Hawk header")?;
-        mac = Mac::new(MacType::Response,
-                       key,
-                       ts,
-                       nonce,
-                       self.method,
-                       self.host,
-                       self.port,
-                       self.path,
-                       self.hash,
-                       self.ext)?;
+        let mac = Mac::new_signed(key,
+                                  MacParams {
+                                      mac_type: MacType::Response,
+                                      ts,
+                                      nonce,
+                                      method: self.method,
+                                      host: self.host,
+                                      port: self.port,
+                                      path: self.path,
+                                      hash: self.hash,
+                                      ext: self.ext
+                                  })?;
 
         // Per JS implementation, the Server-Authorization header includes only mac, hash, and ext
-        Header::new(None,
-                    None,
-                    None,
-                    Some(mac),
-                    match self.ext {
-                        None => None,
-                        Some(v) => Some(v.to_string()),
-                    },
-                    match self.hash {
-                        None => None,
-                        Some(v) => Some(v.to_vec()),
-                    },
-                    None,
-                    None)
+        Ok(Header::default()
+            .with_mac(Some(mac))
+            .with_hash(self.hash)
+            .with_ext(self.ext)?)
     }
 
     /// Validate a Server-Authorization header.
@@ -76,13 +67,13 @@ impl<'a> Response<'a> {
             }
         };
         let nonce = match self.req_header.nonce {
-            Some(ref nonce) => nonce,
+            Some(ref nonce) => nonce.as_ref(),
             None => {
                 return false;
             }
         };
         let header_mac = match response_header.mac {
-            Some(ref mac) => mac,
+            Some(ref mac) => mac.as_ref(),
             None => {
                 return false;
             }
@@ -97,16 +88,19 @@ impl<'a> Response<'a> {
         };
 
         // first verify the MAC
-        match Mac::new(MacType::Response,
-                       key,
-                       ts,
-                       nonce,
-                       self.method,
-                       self.host,
-                       self.port,
-                       self.path,
-                       header_hash,
-                       header_ext) {
+
+        match Mac::new_signed(key,
+                              MacParams {
+                                  mac_type: MacType::Response,
+                                  ts,
+                                  nonce,
+                                  method: self.method,
+                                  host: self.host,
+                                  port: self.port,
+                                  path: self.path,
+                                  hash: header_hash,
+                                  ext: header_ext
+                              }) {
             Ok(calculated_mac) => {
                 if &calculated_mac != header_mac {
                     return false;
@@ -190,17 +184,12 @@ mod test {
     use time::Timespec;
     use openssl::hash::{MessageDigest};
 
-    fn make_req_header() -> Header {
-        Header::new(None,
-                    Some(Timespec::new(1353832234, 0)),
-                    Some("j4h3g2"),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None)
-            .unwrap()
+    fn make_req_header() -> Header<'static> {
+        Header::default()
+            .with_ts(Some(Timespec::new(1353832234, 0)))
+            .with_nonce(Some("j4h3g2")).unwrap()
     }
+
 
     #[test]
     fn test_validation_no_hash() {
@@ -211,14 +200,9 @@ mod test {
         let mac: Mac = Mac::from(vec![48, 133, 228, 163, 224, 197, 222, 77, 117, 81, 143, 73, 71,
                                       120, 68, 238, 228, 40, 55, 64, 190, 73, 102, 123, 79, 185,
                                       199, 26, 62, 1, 137, 170]);
-        let server_header = Header::new(None,
-                                        None,
-                                        None,
-                                        Some(mac),
-                                        Some("server-ext"),
-                                        None,
-                                        None,
-                                        None)
+        let server_header = Header::default()
+            .with_mac(Some(mac))
+            .with_ext(Some("server-ext"))
             .unwrap();
         assert!(resp.validate_header(&server_header, &Key::new("tok", MessageDigest::sha256()).unwrap()));
     }
@@ -234,15 +218,10 @@ mod test {
         let mac: Mac = Mac::from(vec![33, 147, 159, 211, 184, 194, 189, 74, 53, 229, 241, 161,
                                       215, 145, 22, 34, 206, 207, 242, 100, 33, 193, 36, 96, 149,
                                       133, 180, 4, 132, 87, 207, 238]);
-        let server_header = Header::new(None,
-                                        None,
-                                        None,
-                                        Some(mac),
-                                        Some("server-ext"),
-                                        Some(vec![1, 2, 3, 4]),
-                                        None,
-                                        None)
-            .unwrap();
+        let server_header = Header::default()
+            .with_mac(Some(mac))
+            .with_ext(Some("server-ext")).unwrap()
+            .with_hash(Some(vec![1, 2, 3, 4]));
         assert!(resp.validate_header(&server_header, &Key::new("tok", MessageDigest::sha256()).unwrap()));
     }
 
@@ -258,14 +237,9 @@ mod test {
         let mac: Mac = Mac::from(vec![48, 133, 228, 163, 224, 197, 222, 77, 117, 81, 143, 73, 71,
                                       120, 68, 238, 228, 40, 55, 64, 190, 73, 102, 123, 79, 185,
                                       199, 26, 62, 1, 137, 170]);
-        let server_header = Header::new(None,
-                                        None,
-                                        None,
-                                        Some(mac),
-                                        Some("server-ext"),
-                                        None,
-                                        None,
-                                        None)
+        let server_header = Header::default()
+            .with_mac(Some(mac))
+            .with_ext(Some("server-ext"))
             .unwrap();
         assert!(!resp.validate_header(&server_header, &Key::new("tok", MessageDigest::sha256()).unwrap()));
     }
@@ -283,15 +257,10 @@ mod test {
         let mac: Mac = Mac::from(vec![33, 147, 159, 211, 184, 194, 189, 74, 53, 229, 241, 161,
                                       215, 145, 22, 34, 206, 207, 242, 100, 33, 193, 36, 96, 149,
                                       133, 180, 4, 132, 87, 207, 238]);
-        let server_header = Header::new(None,
-                                        None,
-                                        None,
-                                        Some(mac),
-                                        Some("server-ext"),
-                                        Some(vec![1, 2, 3, 4]),
-                                        None,
-                                        None)
-            .unwrap();
+        let server_header = Header::default()
+            .with_mac(Some(mac))
+            .with_ext(Some("server-ext")).unwrap()
+            .with_hash(Some(vec![1, 2, 3, 4]));
         assert!(resp.validate_header(&server_header, &Key::new("tok", MessageDigest::sha256()).unwrap()));
 
         // a different supplied hash won't match..
